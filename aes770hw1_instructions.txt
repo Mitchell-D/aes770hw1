@@ -1,0 +1,4 @@
+Using GOES ABI data for a 640 by 512 region of stratocumulus clouds, perform
+cloud optical depth and cloud effective radii retrievals and discuss your
+results. Also validate your results with existing GOES level 2 (or other
+satellite) products.
