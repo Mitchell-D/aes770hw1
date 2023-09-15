@@ -83,19 +83,9 @@ def fg_figs(fg:FeatureGrid, mask):
             show=False,
             )
 
-def validation_curve(A, B, nbin=128):
-    X = enh.linear_gamma_stretch(np.stack((np.ravel(A),np.ravel(B)), axis=1))
-    X = np.rint(X*(nbin-1)).astype(int)
-    V = np.zeros((nbin,nbin))
-    print(X.shape)
-    for i in range(X.shape[0]):
-        V[*X[i]] += 1
-    gp.plot_heatmap(V, plot_spec={"imshow_norm":"log"})
-
 if __name__=="__main__":
     # Path to a pkl containing the above category masks
     fg_path = Path("data/FG_subgrid_aes770hw1.pkl")
-    retrieval_path = Path("data/retrieval_3.npy")
 
     """
     Load the FeatureGrid, adding ABI recipes and sun/pixel/sat geometry
@@ -123,37 +113,54 @@ if __name__=="__main__":
     #gt.quick_render(fg.data("selectgamma diffwv"))
 
     """ Load retrieval values """
+    #retrieval_path = Path("data/retrieval_3.npy")
+    #retrieval_path = Path("data/retrieval_7.npy")
+    retrieval_path = Path("data/retrieval_8.npy")
+    #retrieval_path = Path("data/retrieval_brute.npy")
     ret = np.load(retrieval_path)
     cod_r = ret[:,:,0]
     cre_r = ret[:,:,1]
-    cod_r[np.where(np.isnan(cod_r))] = np.nanmin(cod_r)
-    cre_r[np.where(np.isnan(cre_r))] = np.nanmin(cre_r)
-    #gt.quick_render(scalar_masked(cod_r, notcloud, (0,50)))
-    #gt.quick_render(scalar_masked(cre_r, notcloud, (0,50)))
+    notcloud = np.logical_or(notcloud, np.isnan(cod_r))
+    iscloud = np.logical_not(notcloud)
 
-    validation_curve(cod_r[np.logical_not(notcloud)],
-                     fg.data("cod")[np.logical_not(notcloud)])
-    validation_curve(cre_r[np.logical_not(notcloud)],
-                     fg.data("cre")[np.logical_not(notcloud)])
+    cod_r[notcloud] = 0
+    cre_r[notcloud] = 0
+
+    #cod_r[np.where(np.isnan(cod_r))] = np.nanmin(cod_r)
+    #cre_r[np.where(np.isnan(cre_r))] = np.nanmin(cre_r)
+
+    #cod_err = np.abs((cod_r-fg.data("cod")))
+    #cre_err = np.abs((cre_r-fg.data("cre")))
+    cod_err = cod_r-fg.data("cod")
+    cre_err = cre_r-fg.data("cre")
+
+    cod_err[notcloud] = 0
+    cre_err[notcloud] = 0
+    cod_err[np.abs(cod_err)>=15] = 15
+    cre_err[np.abs(cre_err)>=15] = 15
+    cod_err[notcloud] = -15
+    cre_err[notcloud] = -15
+    retid = "8"
 
     """ Plot my retrieval values """
     plot_spec = {
             "border_width":1,
-            "cb_label":"Optical Depth",
-            "title":"Cloud optical depth",
-            "cb_cmap":"ripy_spectral",
+            "cb_cmap":"nipy_spectral",
             "cb_orient":"horizontal",
             "cb_label_format":"{x:.0f}",
             "title_size":18,
             "cb_tick_size":14,
             "dpi":200,
             }
+    #'''
+    plot_spec["title"] = "Cloud optical depth",
+    plot_spec["cb_label"] = "Optical Depth",
     gp.geo_scalar_plot(
             cod_r,
             fg.data("lat"),
             fg.data("lon"),
             plot_spec=plot_spec,
-            fig_path=Path("figures/ret_cod.png"),
+            fig_path=Path(f"figures/ret{retid}_cod.png"),
             #fig_path=Path("report/figs/brute_cod.png"),
             show=False,
             )
@@ -164,7 +171,32 @@ if __name__=="__main__":
             fg.data("lat"),
             fg.data("lon"),
             plot_spec=plot_spec,
-            fig_path=Path("figures/ret_cre.png"),
+            fig_path=Path(f"figures/ret{retid}_cre.png"),
             #fig_path=Path("report/figs/brute_cre.png"),
+            show=False,
+            )
+    #'''
+    plot_spec["title"] = "Cloud Optical Depth Error Magnitude"
+    plot_spec["cb_label"] = None
+    #plot_spec["cb_cmap"] = "YlOrRd"
+    #plot_spec["cb_cmap"] = "jet"
+    gp.geo_scalar_plot(
+            #cod_r,
+            cod_err,
+            fg.data("lat"),
+            fg.data("lon"),
+            plot_spec=plot_spec,
+            fig_path=Path(f"figures/ret{retid}_cod-err.png"),
+            show=False,
+            )
+    plot_spec["title"] = "Cloud Effective Radius Error Magnitude"
+    plot_spec["cb_label"] = None
+    gp.geo_scalar_plot(
+            #cre_r,
+            cre_err,
+            fg.data("lat"),
+            fg.data("lon"),
+            plot_spec=plot_spec,
+            fig_path=Path(f"figures/ret{retid}_cre-err.png"),
             show=False,
             )

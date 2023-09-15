@@ -301,7 +301,7 @@ def optimal_estimate(lut2, lut6, lut_albedo, obs,
                      atmo_reflectance, rayleigh_depth,
                      sza, phi, uzen, # pixel geometry
                      szas, taus, cres, phis, uzens, # coordinates
-                     max_count=20, prior=None):
+                     max_count=40, prior=None):
     """
     :@param lut2: Lookup table for band 2, shaped: (sza, tau, cre, uzen, phi)
     :@param lut6: Lookup table for band 6, shaped: (sza, tau, cre, uzen, phi)
@@ -354,7 +354,7 @@ def optimal_estimate(lut2, lut6, lut_albedo, obs,
     Sy = (Sy+np.asarray([[.02,0],[0,.02]]))**2
     # Prior value error (from DCOMP ATBD)
     #Sa = np.asarray([[.2, 0],[0,.5]])#**2
-    Sa = np.asarray([[30, 0],[0,30]])#**2
+    Sa = np.asarray([[100, 0],[0,100]])#**2
     X = prior
 
     count = 0
@@ -491,7 +491,7 @@ if __name__=="__main__":
             except:
                 print(f"EXCEPTION")
                 retrieval[j,i] = np.nan
-    np.save(Path("data/retrieval_7.npy"), retrieval)
+    np.save(Path("data/retrieval_8.npy"), retrieval)
     exit(0)
     if "ret_tau" in fg.labels:
         fg.drop_data("ret_tau")

@@ -19,7 +19,8 @@ from krttdkit.operate.geo_helpers import get_geo_range
 from krttdkit.operate import abi_recipes
 
 def plot_scatter(px, py, ps, tau_lines:list, cre_lines:list,
-              tau_labels:list, cre_labels:list, phi, vza, sza):
+              tau_labels:list, cre_labels:list, phi, vza, sza,
+                 fig_path=None):
     fig, ax = plt.subplots()
     #ax.set(aspect=1)
 
@@ -49,6 +50,8 @@ def plot_scatter(px, py, ps, tau_lines:list, cre_lines:list,
     #plt.ylabel("ABI Band 7 ($3.9 \mu m$) Reflectance")
     plt.title("Cloud reflectances wrt COD and CRE; " + \
             f"PHI={phi}, VZA={vza}, SZA={sza}")
+    if fig_path:
+        plt.savefig(fig_path.as_posix())
     plt.show()
 
 def plot_mesh(image, xcoords, ycoords, tau_lines:list, cre_lines:list,
@@ -89,6 +92,9 @@ if __name__=="__main__":
     lu2,lu2_args = pkl.load(Path("data/lut_rad_ABI2.pkl").open("rb"))
     lu6,lu6_args = pkl.load(Path("data/lut_rad_ABI6.pkl").open("rb"))
 
+    bispec_fig = Path("figures/bispec_deepcloud.png")
+    domain_fig = Path("figures/bispec_deepcloud_domain.png")
+
     """ Load the FeatureGrid and add ABI recipes to it """
     fg = FeatureGrid.from_pkl(pkl_path)
     for label,recipe in abi_recipes.items():
@@ -99,6 +105,11 @@ if __name__=="__main__":
     vidx, hidx = map(np.asarray, zip(
         *[(j,i) for i in range(*hrange) for j in range(*vrange)]))
 
+    """ Make a truecolor with the selected region"""
+    rect_rgb = gt.rect_on_rgb(fg.data("norm256 truecolor"), vrange, hrange)
+    gt.quick_render(rect_rgb)
+    #gp.generate_raw_image(rect_rgb, domain_fig)
+
     """ Get a reduced lookup table using angle averages """
     phi_idx = np.argmin(abs(lu2_args["phis"]-np.average(
         fg.data("raa")[vidx, hidx])))
@@ -107,6 +118,8 @@ if __name__=="__main__":
     sza_idx = np.argmin(abs(lu2_args["szas"]-np.average(
         fg.data("sza")[vidx, hidx])))
     lut_lines = np.stack((lu2,lu6),axis=0)[:,sza_idx,:,:,phi_idx,uzen_idx]
+    print(phi_idx, uzen_idx, sza_idx)
+    exit(0)
 
     """ Subset the reflectance arrays by to selected region """
     b2 = fg.data("2-ref")[vidx, hidx]
@@ -141,15 +154,17 @@ if __name__=="__main__":
     py = coords[0][idx_y]
     px = coords[1][idx_x]
     ps = hist[idx_y,idx_x]*2
-    #plot_scatter(py, px, ps, tau_lines, cre_lines,
 
-    plot_scatter([], [], [], tau_lines, cre_lines,
+    #plot_scatter([], [], [], tau_lines, cre_lines,
+    plot_scatter(py, px, ps, tau_lines, cre_lines,
                  lu2_args["taus"], lu2_args["cres"],
                  phi=lu2_args["phis"][phi_idx],
                  vza=lu2_args["uzens"][uzen_idx],
                  sza=lu2_args["szas"][sza_idx],
+                 fig_path=bispec_fig,
                  )
 
+    exit(0)
     """
     Plot the bispectral diagram alone (without obs) of 3.9um channel
     """

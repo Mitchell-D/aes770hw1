@@ -74,6 +74,21 @@ def load_retrievals(fg):
     fg.add_data("ret6_cre", ret[:,:,1],
                 info={"desc":"cost doesn't decrease ; Sa is diagonal 1"})
 
+    ret = np.load("data/retrieval_7.npy")
+    ret[np.where(np.isnan(ret))] == 0
+    fg.add_data("ret7_cod", ret[:,:,0],
+                info={"desc":"cost doesn't decrease ; Very high Sa"})
+    fg.add_data("ret7_cre", ret[:,:,1],
+                info={"desc":"cost doesn't decrease ; Very high Sa"})
+
+    ret = np.load("data/retrieval_8.npy")
+    ret[np.where(np.isnan(ret))] == 0
+    fg.add_data("ret8_cod", ret[:,:,0],
+                info={"desc":"cost doesn't decrease ; Sa of diagonal 100"})
+    fg.add_data("ret8_cre", ret[:,:,1],
+                info={"desc":"cost doesn't decrease ; Sa of diagonal 100"})
+
+
     ret = np.load("data/retrieval_brute.npy")
     ret[np.where(np.isnan(ret))] == 0
     fg.add_data("retB_cod", ret[:,:,0],
@@ -123,8 +138,8 @@ if __name__=="__main__":
 
     """ Establish a mask setting valid data value indeces to True """
     mask = np.logical_and(
-            np.logical_or(fg.data("sparse_cloud"), fg.data("dense_cloud")),
-            #fg.data("dense_cloud"),
+            #np.logical_or(fg.data("sparse_cloud"), fg.data("dense_cloud")),
+            fg.data("dense_cloud"),
             np.logical_not(fg.data("cre_mask")))
 
 
@@ -139,12 +154,12 @@ if __name__=="__main__":
     '''
 
     """ Load retrieval values """
-    rnum = 6
+    rnum = 8
     cod = fg.data(f"ret{rnum}_cod")
     cre = fg.data(f"ret{rnum}_cre")
     mask = np.logical_and(mask, np.logical_not(np.isnan(cod)))
     validation_curve(fg.data("cod")[mask],fg.data(f"ret{rnum}_cod")[mask],
-                     fig_path=Path(f"figures/val_ret{rnum}_cod.png"),
+                     fig_path=Path(f"figures/val_ret{rnum}_cod_dense-only.png"),
                      #fig_path=Path(f"figures/val_retB_cod.png"),
                      show=False,
                      plot_spec={
@@ -160,7 +175,7 @@ if __name__=="__main__":
                          "cb_size":.5,
                          })
     validation_curve(fg.data("cre")[mask],fg.data(f"ret{rnum}_cre")[mask],
-                     fig_path=Path(f"figures/val_ret{rnum}_cre.png"),
+                     fig_path=Path(f"figures/val_ret{rnum}_cre_dense-only.png"),
                      #fig_path=Path(f"figures/val_retB_cre.png"),
                      show=False,
                      plot_spec={

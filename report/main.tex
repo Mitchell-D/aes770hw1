@@ -108,7 +108,7 @@ Aside from the influence of physical cloud properties $\tau_c$ and $r_e$, the cl
 
 The top-of-atmosphere radiances observed by ABI are also affected by radiation transmitted back through the cloud after being reflected by the surface, additional radiation scattered into the path by above-cloud rayleigh effects, and by additional radiance from thermal emission. The first situation, represented by $R_{tran}$ in Equation \ref{toa_ref}, is a function of cloud transmission $t_c$ and surface albedo $A_s$, typically expressed as $\left(A_s t_c(\tau_c, r_e, \theta) t_c(\tau_c, r_e, \theta_0)\right)\left(A_sR_c(\tau_c, r_e)\right)^{-1}$.
 
-The second case includes photons that are only sent into the sensor aperature because of a rayleigh single-scatter interaction with the atmosphere above the cloud. These interactions are enumerated by (Wang and King, 1997) and include (1) atmosphere$\to$sensor, (2) atmosphere$\to$cloud$\to$sensor, and (3) cloud$\to$atmosphere$\to$sensor \cite{wang_correction_1997}. The rayleigh cases are modeled by $R_{ray}$ in Equation \ref{toa_ref}, and are only relevant for the visible channels since rayleigh scattering is negligible for the longer wavelengths in the near-infrared range.
+The second case includes photons that are only sent into the sensor aperture because of a rayleigh single-scatter interaction with the atmosphere above the cloud. These interactions are enumerated by (Wang and King, 1997) and include (1) atmosphere$\to$sensor, (2) atmosphere$\to$cloud$\to$sensor, and (3) cloud$\to$atmosphere$\to$sensor \cite{wang_correction_1997}. The rayleigh cases are modeled by $R_{ray}$ in Equation \ref{toa_ref}, and are only relevant for the visible channels since rayleigh scattering is negligible for the longer wavelengths in the near-infrared range.
 
 Finally, $R_e$ represents additional radiance from thermal emission, which is significant if the absorption channel used is near the SWIR $3.9\mu m$ range, and may even influence results in the $2.24\mu m$ channel for edge cases with very hot surface temperatures such as below-cloud fire hot spots. For my retrievals, the first 2 situations are considered by SBDART as it performs layerwise discrete ordinate calculations.
 
@@ -193,7 +193,7 @@ An ideal cloud property retrieval would entail solving Equation \ref{toa_ref} fo
             \includegraphics[width=.39\paperwidth]{figs/heatmap_b2b6_ocean.png}
         }
     \end{center}
-    \caption{Comparisons of surface types in ABI Band 2 ($0.64\mu m$) and ABI Band 6 ($2.24\mu m$). Top: dense and sparse clouds; bottom: land and ocean. Surfaces were classified using maximum-likelihood classification based on manually-selected pixel samples. Ultimately I performed all retrievals over dense and sparse cloud surfaces.}
+    \caption{Comparisons of surface types in ABI Band 2 ($0.64\mu m$) and ABI Band 6 ($2.24\mu m$). Top: dense and sparse clouds; bottom: land and ocean. Surfaces were classified using maximum-likelihood classification based on manually-selected pixel samples. Ultimately I performed all retrievals over both dense and sparse cloud surfaces.}
     \label{domain_rgbs}
 \end{figure}
 
@@ -233,7 +233,7 @@ Having generated all needed lookup tables and defined the clouded area of regard
 
 Since in this case we must rely on discrete lookup tables as a forward function, the state needs to be solved for iteratively for each pixel by optimizing a well-defined cost function that both (1) approximates the $\chi^2$ goodness-of-fit and (2) takes into consideration error in the observation quality, a-priori state, and the forward model uncertainty. In general, optimization entails starting with an a-priori guess for the state, using a transition function to determine a new state, and continuing to re-evaluate it until a stopping criterion is achieved.
 
-The DCOMP ATBD employs the cost function specified in Equation \ref{dcomp_cost} with the stopping condition that either $d^2 < 1$ or a user-specified maximum number of iterations are performed \cite{uw_algorithm_nodate}. Equation \ref{walther_cost} is an alternative form of the same expression, which is used by the same authors in (Walther and Heidinger, 2012), though without specifying a stopping condition \cite{walther_implementation_2012} In these equations, $\vec{x}$ is the state vector $[\tau_c, r_e]$, $\vec{y}$ is the observed reflectance $[R^{(VIS)}, R^{(NIR)}]$, and $F(\vec{x})$ is the forward-model reflectance given the current state $\vec{x}$.
+The DCOMP ATBD employs the cost function specified in Equation \ref{dcomp_cost} with the stopping condition that either $d^2 < 1$ or a user-specified maximum number of iterations are performed \cite{uw_algorithm_nodate}. Equation \ref{walther_cost} is an alternative form of the same expression, which is used by the same authors in (Walther and Heidinger, 2012), though without specifying a stopping condition. \cite{walther_implementation_2012} In these equations, $\vec{x}$ is the state vector $[\tau_c, r_e]$, $\vec{y}$ is the observed reflectance $[R^{(VIS)}, R^{(NIR)}]$, and $F(\vec{x})$ is the forward-model reflectance given the current state $\vec{x}$.
 
 \begin{equation}\label{err_mats}
     \begin{split}
@@ -254,9 +254,9 @@ Equation \ref{err_mats} defines error covariance matrices $S_a$, $S_y$, and $S_x
         \delta \vec{x} := S_x\left(K^T S_y^{-1} (\vec{y}-F(\vec{x})) + S_a^{-1}(\vec{x}_a-\vec{x})\right)
 \end{equation}
 
-Equations \ref{jac} and \ref{del} are the expressions for the jacobian matrix and state transition vector provided a pixel observation and current state, which are determined for every pixel at each iterative step until arriving at a stopping condition.
+Equations \ref{jac} and \ref{del} are the expressions for the jacobian matrix and state transition vector provided a pixel observation and current state, which are calculated for every pixel at each iterative step until arriving at a stopping condition.
 
-\subsection{Retrieval Algorithm}
+\subsection{Retrieval Algorithm}\label{dcomp_algo}
 
 \noindent
 For each pixel identified as a cloud...
@@ -278,7 +278,105 @@ For each pixel identified as a cloud...
     \item Return the latest state if it was successfully converged upon, or else return a null value if the maximum number of iterations was exceeded.
 \end{enumerate}
 
+\section{Retrieval Results}
+
+\subsection{Challenges With A-Priori Values}
+
+In the process of developing my retrievals I encountered considerable difficulty enabling pixel states to escape the a-priori values set by step 1 of the process outlined in the previous section, as Figure \ref{bad_retrievals} makes clear. For the first several runs, the observed effective radius remained within a couple of micrometers of the initial $10\mu m$ guess, and the reflectance-dependent a-priori guesses for optical depth varied little from the discrete grid points used in the lookup table. I attempted retrievals using many different combinations of stopping conditions, covariance matrices, and iteration limits, initially to no avail. For most combinations, a value was returned after less than 5 iterations for $60-70\%$ of pixels, the remainder of which tended to saturate at the maximum number of iterations.
+
+\begin{figure}[h!]
+    \centering
+    \begin{center}
+        \makebox[\textwidth]{
+            \includegraphics[width=.32\paperwidth]{figs/val_ret3_cod.png}
+            \includegraphics[width=.30\paperwidth]{figs/val_ret3_cre.png}
+        }
+        \makebox[\textwidth]{
+            \includegraphics[width=.32\paperwidth]{figs/val_ret5_cod.png}
+            \includegraphics[width=.30\paperwidth]{figs/val_ret5_cre.png}
+        }
+        \makebox[\textwidth]{
+            \includegraphics[width=.32\paperwidth]{figs/val_ret6_cod.png}
+            \includegraphics[width=.30\paperwidth]{figs/val_ret6_cre.png}
+        }
+    \end{center}
+    \caption{A sample of failed retrievals, validated pixelwise against actual DCOMP L2 product values for the same image and domain. Retrieval 3 (top) follows DCOMP as closely as possible using the same error covariance matrices, cost function, and stopping conditions. Retrieval 5 (middle) doubles the a-priori and observation error covariance, doubles the maximum number of allowable iterations to 40, and stops on the first iteration with increasing cost. Finally, retrieval 6 (bottom) uses the identity matrix as the a-priori error covariance matrix, and also stops when cost increases.}
+    \label{bad_retrievals}
+\end{figure}
+
 \clearpage
+
+It's worth noting that DCOMP uses 45 lookup table bins for each of the geometric variables (solar zenith, viewing zenith, and relative azimuth),  while my lookup tables only include 21, 21, and 12 bins for the respective angles. In contrast, DCOMP only defines 9 effective radii and 29 optical depth bins, while I define 40 bins for each cloud property. Additionally, DCOMP performs a 5-dimensional interpolation of lookup table values (including geometry and cloud properties) using Newton's method, while I adopt the closest angle values for each pixel in a snap-to-grid fashion, and only interpolate the cloud property state vector. This discrepancy is certainly a source of error in my process, however the simplification frees up a substantial amount of compute, and I doubt that it plays a major role in the issue of moving away from the a-priori values.
+
+\subsection{Role of A-Priori Error Covariance}
+
+After several attempts, and upon close inspection of Figure \ref{bad_retrievals}, I realized that $\tau_c$ and $r_e$ values were able to start moving further away from their initial guesses when I set the a-priori error covariance matrix $S_a$ to progressively higher values. I decided to set the diagonal elements of the matrix to the excessively high value of 100, and obtained the results in Figures \ref{big_sa_val} and \ref{big_sa_err}.
+
+\begin{figure}[h!]
+    \centering
+    \begin{center}
+        \makebox[\textwidth]{
+            \includegraphics[width=.35\paperwidth]{figs/val_ret8_cod.png}
+            \includegraphics[width=.32\paperwidth]{figs/val_ret8_cre.png}
+        }
+    \end{center}
+    \caption{Validation curves for the retrieval with very large $S_a$ values. Although COD values at the extremes of optical thickness are still too discrete, which suggests they haven't moved away from their initial values, the optical depths of clouds with typical values are well-characterized. Effective radius measurements are biased towards underestimate, but have finally started to move away from the $10\mu m$ baseline.}
+    \label{big_sa_val}
+\end{figure}
+
+\begin{figure}[h!]
+    \centering
+    \begin{center}
+        \makebox[\textwidth]{
+            \includegraphics[width=.35\paperwidth]{figs/ret8_cod-err.png}
+            \includegraphics[width=.35\paperwidth]{figs/ret8_cre-err.png}
+        }
+    \end{center}
+    \caption{Error magnitude for the retrieval with large $S_a$ values. Notice that much of the error is contributed by the low-lying fog over California. This is reasonable since the surface albedo is likely much higher.}
+    \label{big_sa_err}
+\end{figure}
+
+\vspace{-2em}
+
+\subsection{Alternative Retrieval Method}
+
+As a sanity check, I adopted a ``brute-force'' method of determining the state of each pixel by implementing the following procedure instead of iterating over the state vector; these steps are a drop-in replacement for steps $4-4.8$ in the retrieval algorithm process from Section \ref{dcomp_algo}. I would actually argue that brute-force here is a misnomer since, unlike the method outlined in DCOMP, this procedure doesn't involve any guess-and-checking. Furthermore, unlike the DCOMP which can only be efficiently parallelized if lookup tables are stored in read-only shared memory, this retrieval process is conducive to per-pixel multithreading with vectorized numpy array operations. As such, it generally takes less than a minute to run, which is a couple of orders of magnitude faster than running DCOMP on a single thread.  For each pixel identified as a cloud...
+
+\begin{enumerate}
+    \setlength\itemsep{-.2em}
+    \item Reduce the lookup table to the geometric values that are closest to the pixel's values.
+    \item Calculate the euclidean distance of reflectance in both channels between the observation and lookup table grid.
+    \item Of the 2 closest reflectance values on the LUT grid, select the one that with a euclidean distance in $[\tau_c, r_e]$ space which is closest to the a-priori value.
+    \item Calculate the offset in the observed reflectance in both channels from the lower-bound surrounding grid point.
+    \item Determine the partial change in $\tau_c$ with respect to the VIS reflectance and $r_e$ with respect to the NIR reflectance surrounding the selected point.
+    \item Using the partial changes and offsets, return an estimate for the $[\tau_c, r_e]$ pixel state.
+\end{enumerate}
+
+To be fair, the advantage of this new method would be diminished if I had attempted to parallelize the original procedure, and the computational complexity of new method increases exponentially with each additional lookup table dimension. Additionally, the reliance on euclidean distance for choosing grid point candidates is a major weakness in the absence of data normalization since the charactaristic scales of reflectance are different between the VIS and NIR channels, and the scale of COD differs from that of CRE. A further shortcoming of the new method is that by only calculating partial derivatives of each property with respect to one channel, it relies more heavily on the assumption that $\tau_c$ and $r_e$ are independent of each other. If my cloud property lookup table points weren't very fine (compared to the DCOMP ATBD), this would probably be a significant source of error.
+
+\begin{figure}[h!]
+    \centering
+    \begin{center}
+        \makebox[\textwidth]{
+            \includegraphics[width=.4\paperwidth]{figs/val_retB_cod.png}
+            \includegraphics[width=.4\paperwidth]{figs/val_retB_cre.png}
+        }
+        \makebox[\textwidth]{
+            \includegraphics[width=.4\paperwidth]{figs/retB_cod-err.png}
+            \includegraphics[width=.4\paperwidth]{figs/retB_cre-err.png}
+        }
+    \end{center}
+    \caption{Validation and error characterization of my alternative retrieval method, compared to the official ABI L2 product based on DCOMP. Negative values correspond to an underestimate, and positive values to an overestimate with respect to the L2 product. The validation curve indicates that cloud optical depth product still shows some effects of the discretization of a-priori values, but is clearly more continuous than previous retrievals. Cloud optical depth is generally underestimated where cloud particle size is low, and overestimated where cloud particle size is high. CRE estimates are underestimated overall, especially over very optically-thin clouds regions. See Figure \ref{l2_scal} for L2 reference values.}
+    \label{brute}
+\end{figure}
+
+\clearpage
+
+\section{Conclusion}
+
+In this project I used ABI L1b radiance data to retrieve the optical thickness and effective radius of liquid oceanic stratiform clouds by following a procedure theoretically outlined by (Nakajima and King, 1990), and practically similar to DCOMP \cite{nakajima_determination_1990}\cite{uw_algorithm_nodate}. This required me to generate lookup tables for top-of-atmosphere radiance using the SBDART radiative transfer numerical model, and to use an optimal estimate inversion technique to determine the best-fitting cloud properties for each observed radiance value. I encountered difficulty when the iterative cost-minimization function scarcely departed from the a-priori values, but developed a separate custom method to perform the inversion, and eventually realized that the setting a-priori error covariance matrix to large values improved the retrievals' performance. Future work for this project may include further investigation of the root causes of initial-value issues, implementation of a forward model capable of handling the emissive $3.9\mu m$ channel, and exploration of alternative cost functions and lookup table architectures.
+
+\section{Appendix}
 
 \vspace{-2em}
 
@@ -286,23 +384,30 @@ For each pixel identified as a cloud...
     \centering
     \begin{center}
         \makebox[\textwidth]{
-            \includegraphics[width=.36\paperwidth]{figs/val_ret3_cod.png}
-            \includegraphics[width=.34\paperwidth]{figs/val_ret3_cre.png}
+            \includegraphics[width=.36\paperwidth]{figs/bispec_deepcloud.png}
+            \includegraphics[width=.32\paperwidth]{figs/bispec_deepcloud_domain.png}
         }
         \makebox[\textwidth]{
-            \includegraphics[width=.36\paperwidth]{figs/val_ret5_cod.png}
-            \includegraphics[width=.34\paperwidth]{figs/val_ret5_cre.png}
-        }
-        \makebox[\textwidth]{
-            \includegraphics[width=.36\paperwidth]{figs/val_ret6_cod.png}
-            \includegraphics[width=.34\paperwidth]{figs/val_ret6_cre.png}
+            \includegraphics[width=.36\paperwidth]{figs/bispec_seabreeze.png}
+            \includegraphics[width=.32\paperwidth]{figs/bispec_seabreeze_domain.png}
         }
     \end{center}
-    \caption{A sample of failed retrievals, validated pixelwise against actual DCOMP L2 product values for the same image and domain. Retrieval 3 (top) follows DCOMP as closely as possible using the same error covariance matrices, cost function, and stopping conditions. Retrieval 5 (middle) doubles the a-priori and observation error covariance, as well as doubling the maximum number of allowable iterations to 40, and Retrieval 6 (bottom)}
-    \label{bad_retrievals}
+    \caption{Bispectral diagrams generated by sampling region a coarser effective radii and generally optically-thicker region, and a region with finer radii. A demo of the sampling process is available here: \href{https://www.youtube.com/watch?v=fN6za3atMfw}{https://www.youtube.com/watch?v=fN6za3atMfw}.}
+    \label{bispec_samples}
 \end{figure}
 
-\clearpage
+\begin{figure}[h!]
+    \centering
+    \begin{center}
+        \makebox[\textwidth]{
+            \includegraphics[width=.4\paperwidth]{figs/scal_l2-cod.png}
+            \includegraphics[width=.4\paperwidth]{figs/scal_l2-cre.png}
+        }
+    \end{center}
+    \caption{COD and CRE retrievals from the production DCOMP L2 product.}
+    \label{l2_scal}
+\end{figure}
+
 
 \bibliography{main}
 
