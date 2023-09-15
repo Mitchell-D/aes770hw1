@@ -2,11 +2,13 @@
 \usepackage[utf8]{inputenc}
 \usepackage[a4paper, total={6in, 8in}, margin=1in]{geometry}
 \usepackage{titlesec}
-%\usepackage[style=ieee]{biblatex}
+%\usepackage[style=ieee, backend=biber]{biblatex}
 \usepackage{graphicx}
 \usepackage{amsmath}
 \usepackage{amssymb}
 \usepackage{amstext}
+\usepackage{enumitem}
+\usepackage{siunitx}
 \usepackage{array}
 \usepackage{xcolor}
 \usepackage{multirow}
@@ -40,6 +42,7 @@
 \fancyfoot{}
 \fancyfoot[C]{\thepage}
 
+\bibliographystyle{ieeetr}
 %\addbibresource{main.bib}
 %\bibliography{main}
 
@@ -48,7 +51,6 @@
 
 \newcommand{\hltexttt}[1]{\texttt{\hl{#1}}}
 
-\bibliographystyle{ieeetr}
 
 \titleformat{\section}
   {\normalfont\fontsize{14}{15}\bfseries}{\thesection}{1em}{}
@@ -60,27 +62,123 @@
 
 Cloud Property Retrieval}
  \author{Mitchell Dodson}
-\date{September 8, 2023}
+\date{September 15, 2023}
 
 \begin{document}
 
 \maketitle
 
+\vspace{-2em}
+
 \begin{figure}[h!]
     \centering
-    \includegraphics[width=.6\paperwidth]{figs/rgbs/rgb_TC.png}
-    \caption{MODIS Truecolor image of my chosen region.}
+    \includegraphics[width=.6\paperwidth]{figs/region-tc.png}
+    \caption{Enhanced ABI Truecolor image of my chosen region, captured by GOES-18 on October 27, 2022 at 1927z. The domain is centered around $29^\circ$ N, $123^\circ$ W, off the coast of Baja, California, and covers a total surface area of about $1,327,600\,\si{km}$. Features include stratocumulus water clouds with a variety of optical properties, as well as dense low-lying fog over California.}
     \label{title_image}
 \end{figure}
 
 \section{Abstract}
 
-This document outlines my implementation of a cloud property retrieval algorithm for ABI L1b radiances in channels 2 ($0.64\mu m$) and 6 ($2.24\mu m$). The proce
+This document outlines my implementation of a cloud property retrieval algorithm for ABI L1b radiances in channels 2 ($0.64\mu m$) and 6 ($2.24\mu m$). The retrieval process leverages the differences in the reflectance function of clouds in the conservative-scattering and absorbing channels in order to estimate the top-of-cloud optical depths (COD) and effective radii (CRE) of pixels identified as water clouds by maximum-likelihood classification. COD and CRE estimates are are important inputs for other retrieval algorithms as well as climate models since the two parameters can almost fully characterize the radiative properties of clouds \cite{slingo_gcm_1989}.
 
 %\clearpage
 %\section{Code comment}\label{code_comment}
 
 \clearpage
+
+\section{Theoretical Basis}
+
+\begin{figure}[h!]
+    \begin{equation}\label{toa_ref}
+        \begin{split}
+            R_{TOA} &= R_c(\theta_0, \theta, \Delta \phi, \tau_c, r_e) + R_e(\tau_c, r_e) + \\
+            &+ R_{ray}(\theta, \theta_0, H, \tau_r, \tau_c, r_e) + R_{tran}(\theta, \theta_0, A_s, \tau_r, r_e) %\frac{A_s t_c(\tau_c, r_e, \theta) t_c(\tau_c, r_e, \theta_0)}{A_sR_c(\tau_c, r_e)}
+        \end{split}
+    \end{equation}
+    \caption{Generalized expression for top-of-atmosphere reflectance. $R_c$ is the actual cloud layer's reflectance function, $R_e$ is the effective reflectivity contributed by thermal emissions, $R_{ray}$ represents the increment of reflectance from above-cloud rayleigh scattering, and $R_{tran}$ specifies the radiation transmitted through the cloud, reflected by the surface, and transmitted through the cloud once again.}
+\end{figure}
+
+\subsection{Spectral Reflectivity of Clouds}
+
+Cloud property retrievals make inferences by comparing simultaneous measurements of backscattered cloud reflectance in a visible waveband near $0.64\mu m$ and a water-absorbing near-infrared band such as $2.24\mu m$ or $3.9\mu m$. Since the single-scattering albedo of water in the visible range is close to 1, it's reasonable to assume that a cloud layer's reflectivity in such a channel is dominantly determined by the layer's optical thickness $\tau_c$ and the viewing geometry at the pixel location. In contrast, the above near-infrared channels strongly attenuate solar irradiance by absorption, the magnitude of which correlates with the volume extinction coefficient of water droplets $\sigma_e = \pi r^2 Q_e$. Due to the nonlinear relationship between absorption and the geometric size of cloud particles, the observed reflectances are more directly related to the \textit{effective radius} $r_e$ as identified by (Hansen and Travis, 1974) \cite{hansen_light_1974}. This quantity is defined as the ratio between the third and second moments of the cloud particle size distribution, and can be thought of as the physical radius particles in a completely uniform cloud layer would need to have in order to match the observed polydisperse cloud's reflectance.
+
+Aside from the influence of physical cloud properties $\tau_c$ and $r_e$, the cloud reflectance function $R_c$ is also highly dependent on the viewing geometry of the Sun/surface/satellite system, which in this case consists of the solar zenith angle $\theta_0$, viewing zenith angle $\theta$, and relative azimuth angle $\Delta \phi$. These angles are important because they determine the path length of radiation through the cloud, the flux density at the cloud surface, and the reflected radiance in the particular direction of the sensor (which depends on the scattering phase function of cloud particles). Theoretical representations of the cloud layer reflectance function $R_c$ based on thick-layer asymptotic expressions are outlined by (King, 1983) and (King, 1987) for conservative-scattering and absorbing wavebands respectively \cite{king_determination_1987}\cite{king_number_1983}, however for this application all the above considerations are handled by Mie code evaluated by the SBDART radiative transfer model.
+
+\subsection{Surface, Rayleigh, and Emission Correction}
+
+The top-of-atmosphere radiances observed by ABI are also affected by radiation transmitted back through the cloud after being reflected by the surface, additional radiation scattered into the path by above-cloud rayleigh effects, and by additional radiance from thermal emission. The first situation, represented by $R_{tran}$ in Equation \ref{toa_ref}, is a function of cloud transmission $t_c$ and surface albedo $A_s$, typically expressed as $\left(A_s t_c(\tau_c, r_e, \theta) t_c(\tau_c, r_e, \theta_0)\right)\left(A_sR_c(\tau_c, r_e)\right)^{-1}$.
+
+The second case includes photons that are only sent into the sensor aperature because of a rayleigh single-scatter interaction with the atmosphere above the cloud. These interactions are enumerated by (Wang and King, 1997) and include (1) atmosphere$\to$sensor, (2) atmosphere$\to$cloud$\to$sensor, and (3) cloud$\to$atmosphere$\to$sensor \cite{wang_correction_1997}. The rayleigh cases are modeled by $R_{ray}$ in Equation \ref{toa_ref}, and are only relevant for the visible channels since rayleigh scattering is negligible for the longer wavelengths in the near-infrared range.
+
+Finally, $R_e$ represents additional radiance from thermal emission, which is significant if the absorption channel used is near the SWIR $3.9\mu m$ range, and may even influence results in the $2.24\mu m$ channel for edge cases with very hot surface temperatures such as below-cloud fire hot spots. For my retrievals, the first 2 situations are considered by SBDART as it performs layerwise discrete ordinate calculations.
+
+\section{Lookup Table Generation}
+
+\begin{table}[h!]
+    \centering
+    \begin{tabular}{ m{.15\linewidth} | m{.15\linewidth} | m{0.6\linewidth}}
+        \textbf{Parameter} & \textbf{Value} & \textbf{Justification} \\
+        \hline
+        PHI; NPHI & [0,180]; 12 & $12^\circ$ even increments of relative azimuth angles. \\
+        \hline
+        UZEN; NZEN & [0,84]; 21 & $4^\circ$ even increments of viewing zenith angles. \\
+        \hline
+        SZA & [0,84]; 21 & $4^\circ$ even increments of solar zenith angle. \\
+        \hline
+        TCLOUD & [0.1,160]; 40 & Logarithmically spaced increments of cloud optical depth. \\
+        \hline
+        NRE & [2,80]; 40 & Logarithmically spaced increments of cloud effective radius. \\
+        \hline
+        WL & $0.64\mu m$ $1.24\mu m$ $3.9\mu m$ & Generate independent lookup tables for VIS, NIR, and SWIR channels. \\
+        \hline
+        IDATM & 2 & Mid-latitude summer; $2.294\,\si{g.cm^{-2}}$ column water vapor to approximate subtropical oceanic profile. \\
+        \hline
+        ISAT & 3 & GOES West relative spectral response functions. \\
+        \hline
+        ISALB & 7 & Ocean surface albedo ID. \\
+        \hline
+        BTEMP & 292 & Mode longwave-window brightness temperature of ocean surface class ($\si{K}$). \\
+        \hline
+        ZCLOUD & 2 & Approximate cloud height calculated using integrated hypsometric equation given mode temperatures of ocean and dense-cloud surface classes. \\
+    \end{tabular}
+    \caption{Outline of the SBDART parameters used for the generation of lookup tables}
+    \label{sbdart_params}
+\end{table}
+
+An ideal cloud property retrieval would entail solving Equation \ref{toa_ref} for $\tau_c$ and $r_e$ as a function of the observed reflectance and other known properties (geometry, cloud height, surface albedo, etc), however an analytic solution is far from possible. Thus, in order to establish a theoretical basis for optimal estimate inversion, we must generate a lookup table consisting of axes covering the full valid range of each variable. Using the parameters in Table \ref{sbdart_params}, I created a 5-dimensional lookup table for each of the relevant wavelengths, each of which ultimately have entries indexed by coordinates in the specified ranges like (solar\_zenith, optical\_depth, effective\_radius, viewing\_zenith, relative\_azimuth).
+
+\clearpage
+
+\begin{figure}[h!]
+    \centering
+    \begin{center}
+        \makebox[\textwidth]{
+            \includegraphics[width=.39\paperwidth]{figs/bispectral_b6.png}
+            \includegraphics[width=.39\paperwidth]{figs/bispectral_b7.png}
+        }
+
+    \end{center}
+    \caption{Comparison of lookup table values for absorptive ABI Band 6 ($2.24\mu m$) and Band 7 ($3.9\mu m$), both with respect to conservative-scattering ABI Band 2 ($0.64\mu m$). For sufficiently optically-thick clouds, the increment changes in reflectance per change in COD or CRE are nearly orthogonal to each other, which is the phenomenon exploited by cloud property retrieval as established by (Nakajima and King, 1990) \cite{nakajima_determination_1990}. The reflectance function for water clouds in the $3.9\mu m$ channel is roughly an order of magnitude more sensitive to the effective radius of cloud particles, however thermal emissions play a significant role in observed radiance in this waveband. In order to use the $3.9\mu m$ channel, additional lookup tables for cloud emissivity as a function of COD and CRE would need to be incorporated into the forward model to correct for the emissions. Thus, in order to avoid accruing additional model error and computational cost, I will proceed to only use the $2.24\mu m$ band for the remainder of this project.}
+    \label{b6b7_bispec}
+\end{figure}
+
+\vspace{-1em}
+
+\section{Retrieval Domain}
+
+\vspace{-2em}
+
+\begin{figure}[h!]
+    \centering
+    \begin{center}
+        \makebox[\textwidth]{
+            \includegraphics[width=.39\paperwidth]{figs/classes.png}
+            \includegraphics[width=.39\paperwidth]{figs/scal_sza.png}
+        }
+    \end{center}
+    \caption{Minimum-distance surface classes and solar zenith angles over my region. Solar zenith angles over my region are between $29^\circ$ and $43^\circ$, and relative azimuth angles are between $130^\circ$ and $150^\circ$.}
+    \label{region_classes}
+\end{figure}
 
 \begin{figure}[h!]
     \centering
@@ -95,11 +193,116 @@ This document outlines my implementation of a cloud property retrieval algorithm
             \includegraphics[width=.39\paperwidth]{figs/heatmap_b2b6_ocean.png}
         }
     \end{center}
-    \caption{Bispectral diagrams of surface types in ABI Band 2 ($0.64\mu m$) and ABI Band 6 ($2.24\mu m$). Surfaces were classified using maximum-likelihood classification based on manually-selected pixel samples. Top: dense and sparse clouds; bottom: land and ocean.}
+    \caption{Comparisons of surface types in ABI Band 2 ($0.64\mu m$) and ABI Band 6 ($2.24\mu m$). Top: dense and sparse clouds; bottom: land and ocean. Surfaces were classified using maximum-likelihood classification based on manually-selected pixel samples. Ultimately I performed all retrievals over dense and sparse cloud surfaces.}
     \label{domain_rgbs}
 \end{figure}
 
-\section{Retrieval Domain}
+\clearpage
+
+\begin{figure}[h!]
+    \centering
+    \begin{center}
+        \makebox[\textwidth]{
+            \includegraphics[width=.39\paperwidth]{figs/scal_2-ref.png}
+            \includegraphics[width=.39\paperwidth]{figs/scal_6-ref.png}
+        }
+    \end{center}
+    \caption{Scalar plots of $0.64\mu m$ reflectance (left), and $2.24\mu m$ reflectance (right). Notice that the color bar scale for the $0.64\mu m$ channel includes values in the range $[0,\,1.2]$, while the $2.24\mu m$ channel only covers values in $[0,\,0.4]$.}
+    \label{region_scalars}
+\end{figure}
+
+From the images in Figure \ref{region_scalars}, it's visually apparent that the cloud-top features observed in the conservative scattering channel don't strongly correlate with the dominant features of the absorptive band. Since the ocean surface albedo is low, the $0.64\mu m$ channel as a proxy for cloud optical depth such that the thickest clouds are generally those with the highest observed reflectance, which are the bright green nodes in the center and top left of the region, as well as a few deep isolated clouds near the bottom. Ocean surface albedo is especially low in the $2.24\mu m$ channel. Per the bispectral diagrams in Figure \ref{b6b7_bispec}, the cloud-top reflectivity function in this channel increases as CRE decreases. As such, the observations suggest that the finest particles are found in the stratiform region extending from the California coastline into the center of the region. In terms of physical rationalization, I suspect that this cloud region corresponds to the newest clouds condensing due to the sea breeze, which may have a generally finer distribution of droplet sizes since the cloud layer has had less time to coagulate into larger particles.
+
+\section{Retrieval Procedure}
+
+\subsection{Mathematical Background}
+
+\begin{equation}\label{chi2}
+    \chi^2 = \left(\ln{R^{(VIS)}_{obs}}-\ln{R^{(VIS)}_{fwd}}\right)^2 + \left(\ln{R^{(NIR)}_{obs}}-\ln{R^{(NIR)}_{fwd}}\right)^2
+\end{equation}
+
+Having generated all needed lookup tables and defined the clouded area of regard, I implemented an Optimal Estimate Inversion algorithm similar to the procedure outlined in the ABI DCOMP algorithm theoretical basis document from the GOES-R Algorithm Working Group \cite{uw_algorithm_nodate}. This technique regards the cloud properties $\tau_c$ and $r_e$ as a 2-element state vector parameterizing a chi-squared distribution of the form outlined in Equation \ref{chi2}, which accounts for the difference between forward-model ($R_{fwd}$) and observed ($R_{obs}$) reflectances in both the visible and near-infrared channels. If the forward-function were analytic, the process of finding a $[\tau_c, r_e]$ state that best fits the data would involve solving for the minima of the gradient of Equation \ref{chi2} with respect to the state on a per-pixel basis.
+
+\begin{equation}\label{dcomp_cost}
+    d^2_i = \left[\vec{x}_i-\vec{x}_{i+1}\right]^TS_x^{-1}\left[\vec{x}_i-\vec{x}_{i+1}\right]
+\end{equation}
+
+\begin{equation}\label{walther_cost}
+    J = \left[\vec{y}-F(\vec{x})\right]^TS_y^{-1}\left[\vec{y}-F(\vec{x})\right] + \left[\vec{x}_a - \vec{x}\right]^T S_a^{-1} \left[\vec{x}_a - \vec{x}\right]
+\end{equation}
+
+Since in this case we must rely on discrete lookup tables as a forward function, the state needs to be solved for iteratively for each pixel by optimizing a well-defined cost function that both (1) approximates the $\chi^2$ goodness-of-fit and (2) takes into consideration error in the observation quality, a-priori state, and the forward model uncertainty. In general, optimization entails starting with an a-priori guess for the state, using a transition function to determine a new state, and continuing to re-evaluate it until a stopping criterion is achieved.
+
+The DCOMP ATBD employs the cost function specified in Equation \ref{dcomp_cost} with the stopping condition that either $d^2 < 1$ or a user-specified maximum number of iterations are performed \cite{uw_algorithm_nodate}. Equation \ref{walther_cost} is an alternative form of the same expression, which is used by the same authors in (Walther and Heidinger, 2012), though without specifying a stopping condition \cite{walther_implementation_2012} In these equations, $\vec{x}$ is the state vector $[\tau_c, r_e]$, $\vec{y}$ is the observed reflectance $[R^{(VIS)}, R^{(NIR)}]$, and $F(\vec{x})$ is the forward-model reflectance given the current state $\vec{x}$.
+
+\begin{equation}\label{err_mats}
+    \begin{split}
+        S_a &:= \begin{pmatrix}\sigma^2_{\tau, a} & 0 \\ 0 & \sigma^2_{r_e, a}\end{pmatrix} \\
+            & \approx \begin{pmatrix} .04 & 0 \\ 0 & .25\end{pmatrix} \\
+        S_y &:= \begin{pmatrix}\sigma^2_{VIS, a} & 0 \\ 0 & \sigma^2_{NIR, a}\end{pmatrix} \\
+            &\approx \begin{pmatrix} 0.16\cdot R^{(VIS)}+0.02 & 0 \\ 0 & 0.16\cdot R^{(NIR)}+0.02\end{pmatrix} \\
+        S_x &:= \left(S_a^{-1} + K^TS_y^{-1}K\right)^{-1}
+    \end{split}
+\end{equation}
+
+Equation \ref{err_mats} defines error covariance matrices $S_a$, $S_y$, and $S_x$ which correspond to a-priori uncertainty, observation uncertainty, and model uncertainty, respectively. The specified values for $S_a$ and $S_y$ were gleaned from the DCOMP ATBD and, ironically, were themselves a source of considerable uncertainty in my retrieval process since (1) my forward-model lookup tables and, by extension, a-priori state guesses are different than those used in DCOMP and (2) the matrices appear in every cost metric and, as such, are fundamental for determining the stopping condition.
+
+\begin{equation}\label{jac}
+        K := \begin{pmatrix} \frac{\partial R^{(VIS)}}{\partial \tau_c} & \frac{\partial R^{(VIS)}}{\partial r_e} \\ \frac{\partial R^{(NIR)}}{\partial \tau_c} & \frac{\partial R^{(NIR)}}{\partial r_e} \end{pmatrix}
+\end{equation}
+\begin{equation}\label{del}
+        \delta \vec{x} := S_x\left(K^T S_y^{-1} (\vec{y}-F(\vec{x})) + S_a^{-1}(\vec{x}_a-\vec{x})\right)
+\end{equation}
+
+Equations \ref{jac} and \ref{del} are the expressions for the jacobian matrix and state transition vector provided a pixel observation and current state, which are determined for every pixel at each iterative step until arriving at a stopping condition.
+
+\subsection{Retrieval Algorithm}
+
+\noindent
+For each pixel identified as a cloud...
+\begin{enumerate}
+    \item Set the prior for effective radius to the closest lookup table value to $r_{e,a} = 10\mu m$, then choose the prior optical depth in the corresponding row that is closest to the observed reflectance.
+    \item Extract the lookup table entries closest to the current solar zenith, viewing zenith, and relative azimuth angles.
+    \item Establish the $S_y$ and $S_a$ matrices for the current pixel observation.
+    \item Until the maximum number of iterations is reached, or the current stopping condition is met...
+        \begin{enumerate}[label*=\arabic*.]
+            \item Identify lookup table values that span the previous state (or a-priori state at the first step).
+            \item Calculate the jacobian matrix $K$ in terms of the partial change in forward-model radiance with respect to the surrounding grid points.
+            \item Get the offset from the previous state to the lower-bound lookup table point ($\tau_c$ and $r_e$).
+            \item Use the new jacobian and offset to estimate the new radiance.
+            \item Convert the new radiance as well as the jacobian to reflectance.
+            \item Establish $S_x$ using the new jacobian matrix, and use it to calculate the state transition vector $\delta \vec{x}$.
+            \item Determine the new state using the transition vector, and use it to evaluate the cost function.
+            \item Use the cost function to decide whether to keep the new state, or to stop iteration and revert to the previous state.
+        \end{enumerate}
+    \item Return the latest state if it was successfully converged upon, or else return a null value if the maximum number of iterations was exceeded.
+\end{enumerate}
+
+\clearpage
+
+\vspace{-2em}
+
+\begin{figure}[h!]
+    \centering
+    \begin{center}
+        \makebox[\textwidth]{
+            \includegraphics[width=.36\paperwidth]{figs/val_ret3_cod.png}
+            \includegraphics[width=.34\paperwidth]{figs/val_ret3_cre.png}
+        }
+        \makebox[\textwidth]{
+            \includegraphics[width=.36\paperwidth]{figs/val_ret5_cod.png}
+            \includegraphics[width=.34\paperwidth]{figs/val_ret5_cre.png}
+        }
+        \makebox[\textwidth]{
+            \includegraphics[width=.36\paperwidth]{figs/val_ret6_cod.png}
+            \includegraphics[width=.34\paperwidth]{figs/val_ret6_cre.png}
+        }
+    \end{center}
+    \caption{A sample of failed retrievals, validated pixelwise against actual DCOMP L2 product values for the same image and domain. Retrieval 3 (top) follows DCOMP as closely as possible using the same error covariance matrices, cost function, and stopping conditions. Retrieval 5 (middle) doubles the a-priori and observation error covariance, as well as doubling the maximum number of allowable iterations to 40, and Retrieval 6 (bottom)}
+    \label{bad_retrievals}
+\end{figure}
+
+\clearpage
 
 \bibliography{main}
 

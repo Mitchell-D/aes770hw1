@@ -37,12 +37,17 @@ def plot_mesh(image, xcoords, ycoords, tau_lines:list, cre_lines:list,
             anno_loc[0] += .02
             ax.annotate(cre_labels[i], xytext=anno_loc, xy=cre_lines[i][-1], )
     im = ax.pcolormesh(xcoords, ycoords, image, norm="log", cmap="nipy_spectral")
+    plt.xlabel("ABI Band 2 ($0.64\mu m$) Reflectance")
+    plt.ylabel("ABI Band 6 ($2.24 \mu m$) Reflectance")
+    plt.title("Dense cloud reflectances wrt COD and CRE; PHI=142, VZA=4.5, sza=36")
     plt.show()
 
 if __name__=="__main__":
     pkl_path = Path("data/FG_subgrid_aes770hw1.pkl")
-    lu2,lu2_args = pkl.load(Path("data/lut_ABI2.pkl").open("rb"))
-    lu6,lu2_args = pkl.load(Path("data/lut_ABI6.pkl").open("rb"))
+    #lu2,lu2_args = pkl.load(Path("data/lut_rad_ABI2.pkl").open("rb"))
+    #lu6,lu6_args = pkl.load(Path("data/lut_rad_ABI6.pkl").open("rb"))
+    lu2,lu2_args = pkl.load(Path("data/lut_rad_ABI2_old.pkl").open("rb"))
+    lu6,lu6_args = pkl.load(Path("data/lut_rad_ABI6_old.pkl").open("rb"))
 
     """ Load the FeatureGrid and add ABI recipes to it """
     fg = FeatureGrid.from_pkl(pkl_path)
@@ -56,13 +61,19 @@ if __name__=="__main__":
         fg.data("vza")[fg.data("dense_cloud")])))
     sza_idx = np.argmin(abs(lu2_args["szas"]-np.average(
         fg.data("sza")[fg.data("dense_cloud")])))
-    print(np.average(fg.data("sza")[fg.data("dense_cloud")]), sza_idx)
     lut_lines = np.stack((lu2,lu6),axis=0)[:,sza_idx,:,:,phi_idx,uzen_idx]
 
-    kappa0 = np.array([0.0019486,0.0415484])
-    #lut,wls,taus,cres,phi,uzen = pkl.load(lut_path.open("rb"))
-    #lut_lines = lut[:,:,:,10,10]
+    print(lu2_args["phis"][phi_idx],
+          lu2_args["uzens"][uzen_idx],
+          lu2_args["szas"][sza_idx])
 
+    from get_retrieval import atmospheric_reflectance, rayleigh_tau
+    ar = atmospheric_reflectance(fg, rayleigh_tau(fg))
+    b2 = (fg.data("2-ref")-ar)[fg.data("dense_cloud")]
+    b6 = fg.data("6-ref")[fg.data("dense_cloud")]
+
+    """ Get lines for the model grid """
+    kappa0 = np.array([0.0019486,0.0415484])
     lut_lines[0] *= kappa0[0]
     lut_lines[1] *= kappa0[1]
     tau_lines, cre_lines = [], []
@@ -76,8 +87,7 @@ if __name__=="__main__":
             cre_lines[i].append(tuple(lut_lines[:,j,i]))
 
     notcloud = np.logical_not(fg.data("dense_cloud"))
-    hist, coords = enh.get_nd_hist((fg.data("2-ref")[fg.data("dense_cloud")],
-                                    fg.data("6-ref")[fg.data("dense_cloud")]))
+    hist, coords = enh.get_nd_hist((b2,b6))
     '''
     # Correct with 1/cos(sza) (?)
     hist, coords = enh.get_nd_hist(

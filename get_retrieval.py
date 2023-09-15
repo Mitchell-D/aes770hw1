@@ -158,7 +158,7 @@ def get_radiance(lut2:np.ndarray, lut6:np.ndarray,
     assert uzen>uzens[0] and uzen<=uzens[-1]
 
     # Make an ordered tuple of the coordinate values
-    coords = tuple(map(np.asarray, (szas, taus, cres, phis, uzens)))
+    coords = tuple(map(np.asarray, (szas, taus, cres, uzens, phis)))
     # Check that all coordinate arrays correspond to LUT dimensions
     assert all(len(c.shape)==1 for c in coords)
     assert tuple(c.size for c in coords) == lut2.shape
@@ -169,30 +169,35 @@ def get_radiance(lut2:np.ndarray, lut6:np.ndarray,
     sza_idx = np.argmin(abs(szas-sza))
     uzen_idx = np.argmin(abs(uzens-uzen))
     phi_idx = np.argmin(abs(phis-phi))
-    for i in range(len(taus)):
-        if taus[i]>tau:
-            tau_idx = i-1
-            break
-    for i in range(len(cres)):
-        if cres[i]>cre:
-            cre_idx = i-1
-            break
+
+    # Find state indeces that span the provided value
+    tdist = taus-tau
+    cdist = cres-cre
+    tau_idx = np.argmin(abs(tdist))
+    cre_idx = np.argmin(abs(cdist))
+    if tdist[tau_idx] > 0 and tau_idx != 0:
+        tau_idx -= 1
+    if cdist[cre_idx] > 0 and cre_idx != 0:
+        cre_idx -= 1
+
     # Get the increment of tau and cre guesses wrt existing grid points
     tau_diff = (tau-taus[tau_idx])/(taus[tau_idx+1]-taus[tau_idx])
-    cre_diff = (cre-cres[cre_idx])/(taus[cre_idx+1]-taus[cre_idx])
+    cre_diff = (cre-cres[cre_idx])/(cres[cre_idx+1]-cres[cre_idx])
+
     # Use the adjacent grid points to estimate the partial derivatives of
     # LUT reflectance in both bands wrt tau and cre
-    dr_dtau = (L[:,sza_idx,tau_idx,cre_idx,phi_idx,uzen_idx] - \
-            L[:,sza_idx,tau_idx+1,cre_idx,phi_idx,uzen_idx]) / \
+    dr_dtau = (L[:,sza_idx,tau_idx+1,cre_idx,uzen_idx,phi_idx] - \
+            L[:,sza_idx,tau_idx,cre_idx,uzen_idx,phi_idx]) / \
             (taus[tau_idx+1] - taus[tau_idx])
-    dr_dcre = L[:,sza_idx,tau_idx,cre_idx,phi_idx,uzen_idx] - \
-            L[:,sza_idx,tau_idx,cre_idx+1,phi_idx,uzen_idx] / \
+
+    dr_dcre = (L[:,sza_idx,tau_idx,cre_idx+1,uzen_idx,phi_idx] - \
+            L[:,sza_idx,tau_idx,cre_idx,uzen_idx,phi_idx]) / \
             (cres[cre_idx+1] - cres[cre_idx])
 
     # Make a jacobian matrix like [[dR2/dtau,dR2/dcre], [dR6/dtau,dR6/dcre]]
     jacobian = np.stack((dr_dtau,dr_dcre)).T
     # Assume CRE and COD are orthogonal and calculate the new reflectances
-    rad_0 = L[:,sza_idx,tau_idx, cre_idx, phi_idx, uzen_idx]
+    rad_0 = L[:,sza_idx,tau_idx, cre_idx, uzen_idx, phi_idx]
     rad_guess = rad_0 + cre_diff*dr_dcre + tau_diff*dr_dtau
     # Return the 2-vector radiances guess and 2x2 jacobian.
     return rad_guess, jacobian
@@ -217,14 +222,89 @@ def get_cost(exp_refs, model_refs, prior_state, new_state, Sy, Sa):
     prior = np.matmul(state_diff.T, np.matmul(np.linalg.inv(Sa), state_diff))
     return model + prior
 
+def brute_estimate(lut2, lut6, obs, sza, phi, uzen, # pixel geometry
+                   szas, taus, cres, phis, uzens, # coordinates
+                   lut_albedo=None, atmo_reflectance=None, rayleigh_depth=None,
+                   max_count=None, prior=None):
+    """
+    :@param lut2: Lookup table for band 2, shaped: (sza, tau, cre, uzen, phi)
+    :@param lut6: Lookup table for band 6, shaped: (sza, tau, cre, uzen, phi)
+    :@param lut_albedo: Lookup table for cloud albedo shaped: (sza, tau)
+    :@param obs: Observation reflectance vector with reflectances in channel
+        2 and 6 like (ref_2, ref_6)
+
+    :@param atmo_reflectance: Atmospheric reflectance at this pixel from
+        rayleigh single-scatter and no cloud interaction
+    :@param rayleigh_depth: Rayleigh optical depth at this pixel given the
+        approximate cloud height.
+
+    :@param phi: Pixel relative azimuth angle
+    :@param uzen: Pixel viewing zenith angle
+    :@param sza: Pixel solar zenith angle
+
+    :@param szas: Solar zenith angle of a pixel
+    :@param taus: Approximate cloud optical depth of a pixel
+    :@param cres: Approximate effective radius of a cloudy pixel
+    :@param phis: Relative zenith angle of a pixel
+    :@param uzens: Satellite zenith angle of a pixel
+
+    :@param max_count: Maximum number of iterations per pixel
+    :@param prior: Prior (tau, cre) vector; If none is provided
+    """
+    # (band2, band6) kappa0 values for converting rad -> ref
+    kappa0 = np.array([0.0019486,0.0415484])
+    szas, taus, cres, phis, uzens = map(
+            np.array, (szas, taus, cres, phis, uzens))
+    # Convert to radiance
+    obs = np.asarray(obs)
+
+    sza_idx = np.argmin(abs(szas-sza))
+    phi_idx = np.argmin(abs(phis-phi))
+    uzen_idx = np.argmin(abs(uzens-uzen))
+
+    lut2 = lut2[sza_idx,:,:,uzen_idx,phi_idx]*kappa0[0]
+    lut6 = lut6[sza_idx,:,:,uzen_idx,phi_idx]*kappa0[1]
+
+    # Get an a-priori index to find the most physically reasonable option
+    cre_idx_ap = np.argmin(abs(cres-11))
+    idx_ap = np.array([cre_idx_ap, np.argmin(abs(lut2[:,cre_idx_ap]-obs[0]))])
+
+    dist = (lut2-obs[0])**2 + (lut6-obs[1])**2
+    #tau_idx, cre_idx = divmod(dist.argmin(), dist.shape[1])
+    options = list(map(np.asarray, zip(*np.where(dist==dist.min()))))
+
+    # Select the closest option
+    tau_idx, cre_idx = tuple(
+            options[np.argmin([sum((o-idx_ap)**2) for o in options])])
+
+    dtau_db2 = (taus[tau_idx]-taus[tau_idx-1]) / \
+            (lut2[tau_idx,cre_idx]-lut2[tau_idx-1,cre_idx])
+
+    dcre_db6 = (cres[cre_idx]-cres[cre_idx-1]) / \
+            (lut6[tau_idx,cre_idx]-lut6[tau_idx,cre_idx-1])
+
+    db2 = obs[0]-lut2[tau_idx,cre_idx]
+    db6 = obs[1]-lut6[tau_idx,cre_idx]
+    new_tau = taus[tau_idx]+dtau_db2*db2
+    new_cre = cres[cre_idx]+dcre_db6*db6
+    if new_tau > max(taus):
+        new_tau = max(taus)
+    elif new_tau < min(taus):
+        new_tau = min(taus)
+    if new_cre > max(cres):
+        new_cre = max(cres)
+    elif new_cre < min(cres):
+        new_cre = min(cres)
+    return new_tau, new_cre
+
 def optimal_estimate(lut2, lut6, lut_albedo, obs,
                      atmo_reflectance, rayleigh_depth,
                      sza, phi, uzen, # pixel geometry
                      szas, taus, cres, phis, uzens, # coordinates
-                     max_count=1000, prior=None):
+                     max_count=20, prior=None):
     """
-    :@param lut2: Lookup table for band 2, shaped: (sza, tau, cre, phi, uzen)
-    :@param lut6: Lookup table for band 6, shaped: (sza, tau, cre, phi, uzen)
+    :@param lut2: Lookup table for band 2, shaped: (sza, tau, cre, uzen, phi)
+    :@param lut6: Lookup table for band 6, shaped: (sza, tau, cre, uzen, phi)
     :@param lut_albedo: Lookup table for cloud albedo shaped: (sza, tau)
     :@param obs: Observation reflectance vector with reflectances in channel
         2 and 6 like (ref_2, ref_6)
@@ -255,7 +335,7 @@ def optimal_estimate(lut2, lut6, lut_albedo, obs,
     # Establish an a-priori guess based on a 10um (water cloud) effective
     # radius and the reflectance in conservative-scattering channel 2
     if prior is None:
-        prior_cre = 10 # um
+        prior_cre = 11 # um
         sza_idx = np.argmin(abs(szas-sza))
         cre_idx = np.argmin(abs(cres-prior_cre))
         phi_idx = np.argmin(abs(phis-phi))
@@ -263,19 +343,23 @@ def optimal_estimate(lut2, lut6, lut_albedo, obs,
         # Expected channel 2 radiance
         exp_rad = obs[0]/kappa0[0]
         tau_idx = np.argmin(abs(
-            lut2[sza_idx,:,cre_idx,phi_idx,uzen_idx] - exp_rad))
+            lut2[sza_idx,:,cre_idx,uzen_idx,phi_idx] - exp_rad))
         prior_tau = taus[tau_idx]
         prior = np.array((prior_tau, prior_cre))
 
     # Background error: calibration, forward-model, plane-parallel, offset
-    Sy = (0.05+0.01+0.1) * prior * np.asarray([[1,0],[0,1]])
+    # Offset value is missing being scaled by spatial heterogeneity
+    #Sy = (0.05+0.01+0.1) * obs * np.asarray([[1,0],[0,1]])
+    Sy = (0.05+0.01) * obs * np.asarray([[1,0],[0,1]])
     Sy = (Sy+np.asarray([[.02,0],[0,.02]]))**2
     # Prior value error (from DCOMP ATBD)
-    Sa = np.asarray([[.04, 0],[0,.25]])
+    #Sa = np.asarray([[.2, 0],[0,.5]])#**2
+    Sa = np.asarray([[30, 0],[0,30]])#**2
     X = prior
 
     count = 0
     convergence = 100000
+    pcost = 100000
     # expects (wl, tau, cre, phi, uzen)
     while count < max_count:
         # Get radiance and jacobian for the current state
@@ -297,6 +381,8 @@ def optimal_estimate(lut2, lut6, lut_albedo, obs,
         ref = rad*kappa0
         jac *= np.stack((kappa0,kappa0)).T
 
+        '''
+        # Apparently SBDART handles above-cloud single-scatter... :(
         """
         Use reflectance components from Wang & King to correct the conservative
         scattering (0.64um) band for back-scattering effects given the
@@ -314,34 +400,31 @@ def optimal_estimate(lut2, lut6, lut_albedo, obs,
         # Reflected from cloud, then scattered by atmosphere
         R3 = rayleigh_depth/(2*v_mu) * c_alb * np.exp(-rayleigh_depth/s_mu)
         obs[0] = obs[0]*np.exp(-rayleigh_depth*amf) - R1 - R2 - R3
+        '''
 
         # Get current state's error coveriance matrix
         Sx = np.linalg.inv(np.linalg.inv(Sa) + \
                 np.matmul(jac.T,np.matmul(np.linalg.inv(Sy),jac)))
         ydiff = obs-ref
         xdiff = prior-X
-        # State differential step. DCOMP has a typo in the delta X calculation,
-        # so it's not clear whether the prior value uncertainty should be
-        # included in the matrix multiple with the inverse jacobian.
-        '''
-        sdiff = np.matmul(jac.T,np.matmul(np.linalg.inv(Sy), ydiff)) + \
-                np.matmul(np.linalg.inv(Sa), xdiff)
-        sdiff = np.matmul(Sx, sdiff)
-        '''
-        #'''
+        # State differential step.
         sdiff = np.matmul(jac.T,(np.matmul(np.linalg.inv(Sy), ydiff))) + \
                 np.matmul(np.linalg.inv(Sa), xdiff)
         sdiff = np.matmul(Sx, sdiff)
-        #'''
         Xnew = X + sdiff
         # Cost function
-        #pcost = get_cost(obs, ref, X, Xnew, Sy, Sa)
-        convergence = np.matmul((X-Xnew).T, np.matmul(
-            np.linalg.inv(Sx), (X-Xnew)))
-        if convergence <= .01:
+        pcost_new = get_cost(obs, ref, prior, Xnew, Sy, Sa)
+        #convergence = np.matmul((X-Xnew).T, np.matmul(
+        #    np.linalg.inv(Sx), (X-Xnew)))
+        #if convergence <= .01:
+        #    break
+        if pcost_new > pcost:
             break
+        else:
+            pcost = pcost_new
         X = Xnew
         count += 1
+    print(X, count, pcost)
     return X
 
 if __name__=="__main__":
@@ -367,12 +450,15 @@ if __name__=="__main__":
     ref_atmo = atmospheric_reflectance(fg, ray_tau)
 
     """ Get reflectances in bands 2 and 6 as well as a dense cloud mask """
-    not_cloud = np.logical_not(fg.data("dense_cloud"))
-    clouds2= fg.data("2-ref-rc")
+    not_cloud = np.logical_not(np.logical_or(
+            fg.data("sparse_cloud"),fg.data("dense_cloud")))
+    #not_cloud = np.logical_not(fg.data("dense_cloud"))
+    #clouds2= fg.data("2-ref-rc")
+    clouds2= fg.data("2-ref")
     clouds6 = fg.data("6-ref")
 
     """ Get the optimal estimate for each pixel value """
-    #prior = np.array([19,8])  # prior guess for (COD, CRE)
+    #prior = np.array([18,8])  # prior guess for (COD, CRE)
     retrieval = np.zeros((*clouds2.shape,2))
     for j in range(clouds2.shape[0]):
         for i in range(clouds2.shape[1]):
@@ -383,24 +469,30 @@ if __name__=="__main__":
             obs = clouds2[j,i], clouds6[j,i]
             uzen = fg.data("vza")[j,i]
             phi = fg.data("raa")[j,i]
-            retrieval[j,i] = optimal_estimate(
-                    lut2=LU_B2,
-                    lut6=LU_B6,
-                    lut_albedo=LU_ALB,
-                    obs=obs,
-                    rayleigh_depth=ray_tau[j,i],
-                    atmo_reflectance=ref_atmo[j,i],
-                    #prior=prior,
-                    sza=sza,
-                    phi=phi,
-                    uzen=uzen,
-                    szas=args2["szas"],
-                    taus=args2["taus"],
-                    cres=args2["cres"],
-                    phis=args2["phis"],
-                    uzens=args2["uzens"]
-                    )
-    np.save(Path("data/retrieval.npy"), retrieval)
+            try:
+                #retrieval[j,i] = brute_estimate(
+                retrieval[j,i] = optimal_estimate(
+                        lut2=LU_B2,
+                        lut6=LU_B6,
+                        lut_albedo=LU_ALB,
+                        obs=obs,
+                        rayleigh_depth=ray_tau[j,i],
+                        atmo_reflectance=ref_atmo[j,i],
+                        #prior=prior,
+                        sza=sza,
+                        phi=phi,
+                        uzen=uzen,
+                        szas=args2["szas"],
+                        taus=args2["taus"],
+                        cres=args2["cres"],
+                        phis=args2["phis"],
+                        uzens=args2["uzens"]
+                        )
+            except:
+                print(f"EXCEPTION")
+                retrieval[j,i] = np.nan
+    np.save(Path("data/retrieval_7.npy"), retrieval)
+    exit(0)
     if "ret_tau" in fg.labels:
         fg.drop_data("ret_tau")
     if "ret_cre" in fg.labels:
