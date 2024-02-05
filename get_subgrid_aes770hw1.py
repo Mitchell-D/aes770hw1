@@ -73,8 +73,6 @@ def get_abi_l1b(data_dir:Path, target_time:datetime, sat="16", scan="C"):
             )
     return fg
 
-
-
 if __name__=="__main__":
     debug = True
 

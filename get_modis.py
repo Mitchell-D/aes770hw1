@@ -9,11 +9,7 @@ import subprocess
 import shlex
 
 import krttdkit.visualize.guitools as gt
-import krttdkit.operate.enhance as enh
-import krttdkit.visualize.geoplot as gp
-from krttdkit.visualize import TextFormat as TFmt
 from krttdkit.products import MOD021KM
-from krttdkit.operate import Recipe
 
 data_dir = Path("data/modis")
 

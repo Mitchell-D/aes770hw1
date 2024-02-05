@@ -118,8 +118,8 @@ if __name__=="__main__":
     sza_idx = np.argmin(abs(lu2_args["szas"]-np.average(
         fg.data("sza")[vidx, hidx])))
     lut_lines = np.stack((lu2,lu6),axis=0)[:,sza_idx,:,:,phi_idx,uzen_idx]
-    print(phi_idx, uzen_idx, sza_idx)
-    exit(0)
+    #print(phi_idx, uzen_idx, sza_idx)
+    #exit(0)
 
     """ Subset the reflectance arrays by to selected region """
     b2 = fg.data("2-ref")[vidx, hidx]
