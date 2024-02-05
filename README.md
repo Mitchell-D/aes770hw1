@@ -8,8 +8,8 @@ discuss your results. Also validate your results with existing GOES
 level 2 (or other satellite) products.
 
 <p align="center">
-  <img height="300" src="https://github.com/Mitchell-D/aes770hw1/blob/main/report/figs/bispec_seabreeze.png" />
   <img height="300" src="https://github.com/Mitchell-D/aes770hw1/blob/main/report/figs/bispec_seabreeze_domain.png" />
+    <img height="300" src="https://github.com/Mitchell-D/aes770hw1/blob/main/report/figs/bispec_seabreeze.png" />
 </p>
 
 ## scripts
